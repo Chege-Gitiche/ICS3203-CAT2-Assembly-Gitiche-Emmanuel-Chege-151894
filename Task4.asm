@@ -1,94 +1,119 @@
 section .data
-    sensor_value db 0            ; Memory location simulating water level sensor
-    motor_status db 0            ; Memory location for motor control (0 = off, 1 = on)
-    alarm_status db 0            ; Memory location for alarm (0 = off, 1 = on)
-
-    prompt_msg db "Enter sensor value: ", 0
-    low_msg db "Motor OFF: Water level low.", 0
-    moderate_msg db "Motor OFF: Water level moderate.", 0
-    high_msg db "ALARM ON: Water level high!", 0
-    newline db 10, 0             ; Newline character for formatting
+    sensor_value dw 0        ; Simulated sensor value
+    motor_status db 0        ; Motor status: 0 = OFF, 1 = ON
+    alarm_status db 0        ; Alarm status: 0 = OFF, 1 = ON
+    prompt_sensor db "Enter sensor value (0-100):", 0
+    motor_on_msg db "Motor ON", 0
+    motor_off_msg db "Motor OFF", 0
+    alarm_on_msg db "Alarm ON", 0
+    alarm_off_msg db "Alarm OFF", 0
 
 section .bss
-    input_buffer resb 2          ; Buffer to read user input (1 byte + newline)
+    input_buffer resb 4      ; Buffer for user input
 
 section .text
     global _start
 
 _start:
-    ; Display the prompt
-    mov eax, 4                   ; Syscall number for sys_write
-    mov ebx, 1                   ; File descriptor (stdout)
-    mov ecx, prompt_msg          ; Address of the prompt message
-    mov edx, 21                  ; Length of the prompt message
-    int 0x80                     ; Perform syscall to display the prompt
+    ; Print sensor input prompt
+    mov eax, 4               ; syscall: write
+    mov ebx, 1               ; file descriptor: stdout
+    mov ecx, prompt_sensor   ; pointer to message
+    mov edx, 30              ; message length
+    int 0x80
 
-    ; Read "sensor value" from input (simulating a sensor)
-    mov eax, 3                   ; Syscall number for sys_read
-    mov ebx, 0                   ; File descriptor (stdin)
-    mov ecx, input_buffer        ; Address to store sensor value
-    mov edx, 2                   ; Read 2 bytes (input + newline)
-    int 0x80                     ; Perform syscall
+    ; Read user input for sensor value
+    mov eax, 3               ; syscall: read
+    mov ebx, 0               ; file descriptor: stdin
+    mov ecx, input_buffer    ; buffer to store input
+    mov edx, 4               ; buffer length
+    int 0x80
 
-    ; Convert ASCII input to integer
-    movzx eax, byte [input_buffer] ; Read first byte of input
-    sub eax, '0'                 ; Convert ASCII to integer
-    cmp eax, 0                   ; Check if valid input (>= 0)
-    jl invalid_input             ; Jump if invalid input
-    cmp eax, 9                   ; Check if valid input (<= 9)
-    jg invalid_input             ; Jump if invalid input
-    mov [sensor_value], al       ; Store integer value back to memory
+    ; Convert input to integer
+    mov esi, input_buffer    ; pointer to input buffer
+    xor eax, eax             ; clear eax
+    xor ecx, ecx             ; clear ecx
+parse_input:
+    movzx ecx, byte [esi]    ; load byte
+    cmp ecx, 0xA             ; check for newline
+    je process_sensor
+    sub ecx, '0'             ; convert ASCII to integer
+    imul eax, eax, 10        ; shift left by 10 (decimal)
+    add eax, ecx             ; add digit
+    inc esi                  ; move to next character
+    jmp parse_input
 
-    ; Determine action based on sensor value
-    cmp al, 2                    ; Compare water level to 2 (low threshold)
-    jl low_level                 ; Jump if water level < 2 (low)
+process_sensor:
+    mov [sensor_value], eax  ; Store the sensor value
 
-    cmp al, 5                    ; Compare water level to 5 (high threshold)
-    jg high_level                ; Jump if water level > 5 (high)
+    ; Check sensor value and take action
+    mov ax, [sensor_value]   ; Load sensor value
+    cmp ax, 30               ; Compare to low threshold
+    jl activate_motor        ; If less than 30, activate motor
 
-moderate_level:
-    ; Water level is moderate: Turn motor OFF
-    mov byte [motor_status], 0   ; Set motor_status to OFF
-    mov byte [alarm_status], 0   ; Set alarm_status to OFF
-    mov eax, 4                   ; Syscall number for sys_write
-    mov ebx, 1                   ; File descriptor (stdout)
-    mov ecx, moderate_msg        ; Address of message
-    mov edx, 29                  ; Length of message
-    int 0x80                     ; Write output
-    jmp end_program              ; Exit program
+    cmp ax, 70               ; Compare to high threshold
+    jg activate_alarm        ; If greater than 70, activate alarm
 
-high_level:
-    ; Water level is high: Trigger alarm
-    mov byte [motor_status], 0   ; Set motor_status to OFF
-    mov byte [alarm_status], 1   ; Set alarm_status to ON
-    mov eax, 4                   ; Syscall number for sys_write
-    mov ebx, 1                   ; File descriptor (stdout)
-    mov ecx, high_msg            ; Address of message
-    mov edx, 27                  ; Length of message
-    int 0x80                     ; Write output
-    jmp end_program              ; Exit program
+    ; Moderate level: stop motor
+    jmp stop_motor
 
-low_level:
-    ; Water level is low: Turn motor OFF
-    mov byte [motor_status], 0   ; Set motor_status to OFF
-    mov byte [alarm_status], 0   ; Set alarm_status to OFF
-    mov eax, 4                   ; Syscall number for sys_write
-    mov ebx, 1                   ; File descriptor (stdout)
-    mov ecx, low_msg             ; Address of message
-    mov edx, 29                  ; Length of message
-    int 0x80                     ; Write output
-    jmp end_program              ; Exit program
+activate_motor:
+    mov byte [motor_status], 1 ; Turn motor ON
+    mov byte [alarm_status], 0 ; Ensure alarm is OFF
+    jmp display_status
 
-invalid_input:
-    ; Handle invalid input
-    mov eax, 4                   ; Syscall number for sys_write
-    mov ebx, 1                   ; File descriptor (stdout)
-    mov ecx, newline             ; Print newline for invalid input
-    mov edx, 1                   ; Length of newline
-    int 0x80                     ; Perform syscall
+activate_alarm:
+    mov byte [alarm_status], 1 ; Turn alarm ON
+    mov byte [motor_status], 0 ; Ensure motor is OFF
+    jmp display_status
 
-end_program:
-    ; Exit program
-    mov eax, 1                   ; Syscall number for sys_exit
-    xor ebx, ebx                 ; Exit code 0
-    int 0x80                     ; Exit
+stop_motor:
+    mov byte [motor_status], 0 ; Turn motor OFF
+    mov byte [alarm_status], 0 ; Ensure alarm is OFF
+
+display_status:
+    ; Display motor status
+    cmp byte [motor_status], 1
+    je print_motor_on
+    jmp print_motor_off
+
+print_motor_on:
+    mov eax, 4               ; syscall: write
+    mov ebx, 1               ; file descriptor: stdout
+    mov ecx, motor_on_msg    ; pointer to message
+    mov edx, 9               ; message length
+    int 0x80
+    jmp print_alarm_status
+
+print_motor_off:
+    mov eax, 4               ; syscall: write
+    mov ebx, 1               ; file descriptor: stdout
+    mov ecx, motor_off_msg   ; pointer to message
+    mov edx, 10              ; message length
+    int 0x80
+
+print_alarm_status:
+    ; Display alarm status
+    cmp byte [alarm_status], 1
+    je print_alarm_on
+    jmp print_alarm_off
+
+print_alarm_on:
+    mov eax, 4               ; syscall: write
+    mov ebx, 1               ; file descriptor: stdout
+    mov ecx, alarm_on_msg    ; pointer to message
+    mov edx, 9               ; message length
+    int 0x80
+    jmp exit_program
+
+print_alarm_off:
+    mov eax, 4               ; syscall: write
+    mov ebx, 1               ; file descriptor: stdout
+    mov ecx, alarm_off_msg   ; pointer to message
+    mov edx, 10              ; message length
+    int 0x80
+
+exit_program:
+    mov eax, 1               ; syscall: exit
+    xor ebx, ebx             ; return code 0
+    int 0x80
